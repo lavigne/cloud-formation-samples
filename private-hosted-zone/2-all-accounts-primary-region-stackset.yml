@@ -1,0 +1,74 @@
+Description: >
+  This template creates global resources that are required in all member accounts to set up
+  a private hosted zone with automatic DNS entry creation for new EC2 instances. For example, 
+  a cross-account role is created in member accounts that is assumed by a Lambda function 
+  in the networking account  responsible for automatically creating DNS entries for new 
+  instances in member accounts. This template needs to be run as a stack set in the 
+  management account and deployed to the primary region in all member accounts in the organization.
+
+Parameters:
+  NetworkAccountId:
+    Type: String
+    Default: 685976753954
+
+Resources:
+
+  # Role used by the EventBridge rule that listens for EC2 start/terminate events in member accounts.
+  # It allows that rule to send those events to the default EventBridge bus in the networking account
+  # which will trigger a Lambda to create/remove DNS records for EC2 instances.
+  # The EventBridge rule is created in 3-all-accounts-all-regions-stackset.yml.
+  Ec2InstanceCreateEventBridgeRuleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: Ec2InstanceCreateEventBridgeRuleRole
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PutEventsDestinationBus
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action: events:PutEvents
+                Resource: !Sub arn:aws:events:${NetworkAccountId}:${AWS::AccountId}:event-bus/default
+                    
+  # Role assumed by CreateDnsRecordLambda in the network account that will allow it to describe instances
+  # in other accounts so it can get the name tag from an instance and remove the DNS records for an
+  # instance upon termination. This is necessary because the terminate event that triggers the lambda
+  # doesn't provide the instance tags, just the instance ID. So the Lambda retrieves the tags using the ID.
+  GetInstanceDetailsLambdaCrossAccountRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: GetInstanceDetailsLambdaCrossAccountRole
+      AssumeRolePolicyDocument:
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              # allow the role used by the lambda in the network account to assume this role so it can get instance details
+              AWS: !Sub 'arn:aws:iam::${NetworkAccountId}:role/CreateDnsRecordLambdaExecutionRole' 
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DescribeEc2Instances
+          PolicyDocument:
+            Statement:
+              - 
+                Sid: DescribeEc2Instances
+                Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                Resource: '*'
+
+Outputs:
+  Ec2InstanceCreateEventBridgeRuleRole:
+    Description: A reference to the Ec2InstanceCreateEventBridgeRuleRole ARN
+    Value: !GetAtt Ec2InstanceCreateEventBridgeRuleRole.Arn
+    Export:
+      Name: ec2-instance-create-event-bridge-rule-role
+                  

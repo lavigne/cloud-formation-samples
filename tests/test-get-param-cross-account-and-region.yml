@@ -1,0 +1,40 @@
+Parameters:
+  OrganizationId:
+    Type: String
+    Default: o-jyj5yzbnz0
+
+  ParameterAccountId:
+    Type: Number
+    Description: Account where the parameter being retrieved resides
+    Default: 685976753954
+
+  ParameterRegion:
+    Type: String
+    Description: Region where the parameter being retrieved resides
+    Default: us-east-1
+
+  SharedServicesAccountId:
+    Type: Number
+    Description: Account where the getSsmParameterLambda resides, typically the Share Services account
+    Default: 527282831111
+
+Resources:
+  # grab a parameter from  a different account and region using the lambda function in the shared services account
+  ParamFromDifferentAccountAndRegion:
+    Type: Custom::GetParamFromDifferentAccountAndRegion
+    Properties:
+      ServiceToken: !Sub arn:aws:lambda:${AWS::Region}:${SharedServicesAccountId}:get-ssm-parameter-${AWS::Region}
+      ServiceTimeout: 60
+      parameterName: /test/param
+      accountId: !Ref ParameterAccountId
+      region: !Ref ParameterRegion
+
+  # now create a new parameter in this account using the value retrieved from the other account to verify we got it
+  TestParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /test/new-param
+      Type: String
+      Tier: Advanced
+      Value: !GetAtt ParamFromDifferentAccountAndRegion.parameterValue
+      Description: ParamFromDifferentAccountAndRegion

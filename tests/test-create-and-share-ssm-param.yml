@@ -1,0 +1,33 @@
+Parameters:
+  OrganizationId:
+    Type: String
+    Default: o-jyj5yzbnz0
+
+  ManagementAccountId:
+    Type: Number
+    Default: 685976753954
+
+Resources:
+
+  TestParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /test/param
+      Type: String
+      Tier: Advanced
+      Value: !Sub 'Hello from region ${AWS::Region} in account ${AWS::AccountId}'
+      Description: ParamFromDifferentAccountAndRegion
+
+  TestParameterParameterShare:
+    Type: AWS::RAM::ResourceShare
+    DependsOn:
+      - TestParameter
+    Properties:
+      Name: TestParameter Parameter Share
+      ResourceArns:
+        - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/test/param'
+      Principals:
+        - !Sub
+          - 'arn:aws:organizations::${managementAccountId}:organization/${organizationId}'
+          - managementAccountId: !Ref ManagementAccountId
+            organizationId: !Ref OrganizationId

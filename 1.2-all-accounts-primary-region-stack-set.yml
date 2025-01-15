@@ -1,0 +1,16 @@
+Description: >
+  This template creates resources in the primary region of all member accounts. It is primarily
+  for creating global resources such as IAM roles.
+
+Parameters:
+  NetworkAccountId:
+    Type: String
+    Default: 685976753954
+    
+Resources:
+  PrivateHostedZoneGlobalResources:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./management-account/private-hosted-zone-global-resources.yml
+      Parameters:
+        NetworkAccountId: !Ref NetworkAccountId

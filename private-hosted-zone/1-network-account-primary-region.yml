@@ -1,0 +1,379 @@
+Description: >
+  This template creates a private hosted zone in the primary region of the network account.
+
+Parameters:
+  OrganizationId:
+    Type: String
+    Default: o-jyj5yzbnz0
+
+  HostedZoneDomain:
+    Type: String
+    Default: example.com
+
+  DnsRecordFailureNotificationEmailAddress:
+    Type: String
+    Default: chad.lavigne@solutiondesign.com
+    Description: Email address where DNS record auto-creation failure notices will be sent
+
+Conditions:
+  AddEmailNotificationSubscription: !Not
+    - !Equals
+      - !Ref DnsRecordFailureNotificationEmailAddress
+      - ''
+
+Resources:
+  NetworkVpc:
+    Type: AWS::EC2::VPC
+    Properties:      
+      CidrBlock: 192.168.0.0/28
+      EnableDnsSupport: true
+      EnableDnsHostnames: true   
+      Tags:
+      - Key: Name
+        Value: Network VPC
+      - Key: Description
+        Value: Initial network VPC attached to the private hosted zone, required because a private hosted zone must have a VPC attached
+
+  PrivateHostedZone: 
+    Type: AWS::Route53::HostedZone
+    Properties: 
+      HostedZoneConfig: 
+        Comment: Example private hosted zone
+      Name: !Ref HostedZoneDomain
+      VPCs: 
+        - 
+          VPCId: !Ref NetworkVpc
+          VPCRegion: !Ref AWS::Region
+
+  # Save the hosted zone ID to an SSM parameter so templates run in other accounts/regions can access it
+  HostedZoneParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /networking/hosted-zone-id
+      Type: String
+      Tier: Advanced
+      Value: !Ref PrivateHostedZone
+      Description: AWS Private Hosted Zone ID
+
+  # Allow all accounts in the org to send events to the network account's default EventBridge bus so they
+  # can send EC2 instance start/terminate events to the network account to trigger a Lambda to automatically 
+  # create/remove DNS entries in the private hosted zone when instances are created/terminated
+  NetworkAccountDefaultEventBusPolicy:
+    Type: AWS::Events::EventBusPolicy
+    Properties:
+      StatementId: AllowPutEventsToOrgAccounts
+      Statement:
+        Effect: Allow
+        Principal: '*'
+        Action: events:PutEvents
+        Resource: !Sub 'arn:aws:events:*:${AWS::AccountId}:event-bus/default'
+        Condition:
+          StringEquals:
+            aws:PrincipalOrgID: !Ref OrganizationId
+
+  # EventBridge rule to listen for ec2 instance create and terminate events in member accounts
+  CreateEc2DnsEntryEventBridgeRule:
+    Type: AWS::Events::Rule    
+    Properties:
+      Name: CreateEc2DnsEntryEventBridgeRule
+      Description: Responds to EC2 instance create events from member accounts
+      EventPattern:
+        detail:
+          eventSource:
+            - ec2.amazonaws.com
+          eventName:
+            - RunInstances
+            - TerminateInstances
+      State: ENABLED
+      Targets:
+        -
+          Id: CreateDnsRecordLambdaFunction
+          Arn: !GetAtt CreateDnsRecordLambda.Arn
+
+  DnsRecordFailureNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: dns-record-failure-notifications
+      DisplayName: DNS Record Error
+
+  DnsRecordFailureNotificationTopicSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: AddEmailNotificationSubscription
+    Properties:
+      TopicArn: !Ref DnsRecordFailureNotificationTopic
+      Endpoint: !Ref DnsRecordFailureNotificationEmailAddress
+      Protocol: email
+
+  CreateDnsRecordLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: >
+        Function to automatically create/remove DNS records in the networking account when EC2 instances are created/terminated in member accounts.
+      Runtime: nodejs20.x
+      Timeout: 60      
+      Role: !GetAtt CreateDnsRecordLambdaExecutionRole.Arn
+      Handler: index.handler
+      Environment:
+        Variables:
+          HOSTED_ZONE_ID: !GetAtt PrivateHostedZone.Id
+          SNS_TOPIC_ARN: !Ref DnsRecordFailureNotificationTopic
+      Code:
+        ZipFile: |
+          const { Route53Client, ChangeResourceRecordSetsCommand, GetHostedZoneCommand, ListResourceRecordSetsCommand } = require("@aws-sdk/client-route-53");
+          const { EC2Client, DescribeInstancesCommand } = require("@aws-sdk/client-ec2");
+          const { STSClient, AssumeRoleCommand } = require("@aws-sdk/client-sts");
+          const { SNSClient, PublishCommand } = require("@aws-sdk/client-sns");
+
+          const route53Client = new Route53Client();
+          const snsClient = new SNSClient({})
+
+          exports.handler = async (event, context) => {
+            console.info("Create DNS record lambda triggered");
+            console.info(JSON.stringify(event));
+            let responseData = {};
+            let status = 200;            
+            const hostedZoneId = process.env.HOSTED_ZONE_ID;
+
+            try {
+              const eventName = event.detail.eventName;
+              const instances = event.detail.responseElements.instancesSet.items;
+
+              switch(eventName) {
+                case "RunInstances":
+                  responseData = await updateDnsEntries(instances, hostedZoneId, "CREATE");
+                  break;
+                case "TerminateInstances":
+                  responseData = await updateDnsEntry(instances[0].instanceId, event.account, event.region, hostedZoneId, "DELETE");
+                  break;
+                default:
+                  status = 400;
+                  responseData = {error: `Unsupported event triggered CreateDnsRecordLambda: ${eventName}`}
+              }
+            } catch(error) {
+              status = 500;
+              responseData = {error: error.message};
+            }
+            
+            const responseBody = JSON.stringify(responseData);
+            console.info(`response: ${responseBody}`);
+            return {statusCode: status, body: responseBody};
+          };
+
+          async function updateDnsEntries(instances, hostedZoneId, action) {
+            let responseData = {"errors": []};
+            let changeDnsRecordSetsInput = {
+              "ChangeBatch": {
+                "Changes": []
+              },
+              "HostedZoneId": hostedZoneId
+            };
+
+            // In theory, there could be more than one instance in the event. So we loop through the instance
+            // list and create a DNS change for each instance and add it to the "Changes" attribute on
+            // the changeDnsRecordSetsInput object, then make one ChangeResourceRecordSetsCommand call to Route53
+            // to make the updates.
+            for(const instance of instances) {
+              const nameArray = instance.tagSet.items.filter((tag) => tag.key === "Name");
+
+              if(nameArray.length === 0) {
+                console.info("No name tag found on instance, skipping DNS update");
+              } else {
+                const hostedZoneName = await getHostedZoneName(hostedZoneId);
+                const recordName = `${nameArray[0].value}.${hostedZoneName}`;
+                const exists = await recordExists(hostedZoneId, recordName);
+
+                if(!exists) {
+                  const recordValue = instance.privateIpAddress;
+                  const changeInput = await getDnsRecordChangeInput(action, recordName, recordValue);
+                  changeDnsRecordSetsInput.ChangeBatch.Changes.push(changeInput);
+                } else {
+                  const message = `Unable to create DNS record ${recordName} in hosted zone ${hostedZoneId}, a record with that name already exists.`;
+                  console.error(message);
+                  responseData.errors.push(message);
+                  sendErrorNotification(message);
+                }
+              }
+            }
+
+            if(changeDnsRecordSetsInput.ChangeBatch.Changes.length) {
+              console.info(`changeDnsRecordSetsInput ${JSON.stringify(changeDnsRecordSetsInput)}`);
+              responseData = await route53Client.send(new ChangeResourceRecordSetsCommand(changeDnsRecordSetsInput));
+            }
+
+            return responseData;
+          }
+
+          async function updateDnsEntry(instanceId, accountId, region, hostedZoneId, action) {
+            let responseData = {};
+            const instanceDetails = await getInstanceDetails(instanceId, accountId, region);
+            const instanceName = instanceDetails.name;
+            const recordValue = isntanceDetails.privateIp;
+
+            if(instanceName) {
+              let changeDnsRecordSetsInput = {
+                "ChangeBatch": {
+                  "Changes": []
+                },
+                "HostedZoneId": hostedZoneId
+              };
+
+              const hostedZoneName = await getHostedZoneName(hostedZoneId);
+              const recordName = `${instanceName}.${hostedZoneName}`;
+              const changeInput = await getDnsRecordChangeInput(action, recordName, recordValue);
+              changeDnsRecordSetsInput.ChangeBatch.Changes.push(changeInput);
+
+              console.info(`changeDnsRecordSetsInput ${JSON.stringify(changeDnsRecordSetsInput)}`);
+              responseData = await route53Client.send(new ChangeResourceRecordSetsCommand(changeDnsRecordSetsInput));
+            } else {
+              console.info(`No name tag found on instance ${instanceId}, skipping DNS update`);
+            }
+
+            return responseData;
+          }
+
+          async function getDnsRecordChangeInput(action, recordName, recordValue) {
+            return {
+              "Action": action,
+              "ResourceRecordSet": {
+                "Name": recordName,
+                "ResourceRecords": [
+                  {
+                    "Value": recordValue
+                  }
+                ],
+                "TTL": 60,
+                "Type": "A"
+              }
+            };
+          }
+
+          async function getHostedZoneName(hostedZoneId) {
+            const getHostedZoneCommand = new GetHostedZoneCommand({"Id": hostedZoneId});
+            const response = await route53Client.send(getHostedZoneCommand);
+            return response.HostedZone.Name;
+          }
+
+          async function recordExists(hostedZoneId, recordName) {
+            console.info(`checking to see if record ${recordName} exists in hosted zone ${hostedZoneId}`);
+            let exists = false;
+            const listResourceRecordSetsCommand = new ListResourceRecordSetsCommand({HostedZoneId: hostedZoneId});
+            const listRecordSetsResponse = await route53Client.send(listResourceRecordSetsCommand);
+
+            if(listRecordSetsResponse.ResourceRecordSets.length) {
+              for(const record of listRecordSetsResponse.ResourceRecordSets) {
+                console.info(`found record ${record.Name}`);
+
+                if(record.Name === recordName) {
+                  exists = true;
+                  break;
+                }
+              }
+            }
+            
+            return exists;
+          }
+
+          async function getInstanceDetails(instanceId, accountId, region) {
+            console.info(`getInstanceDetails: ${instanceId}, ${accountId}, ${region}`);
+
+            // assume role in the account where the instance resides
+            const {AccessKeyId, SecretAccessKey, SessionToken } = await assumeRole(accountId);
+
+            const ec2Client = new EC2Client({
+              region: region,
+              credentials: {
+                accessKeyId: AccessKeyId,
+                secretAccessKey: SecretAccessKey,
+                sessionToken: SessionToken
+              }
+            });
+
+            const describeInstancesCommand = new DescribeInstancesCommand({"InstanceIds": [instanceId]});
+            console.info(`describeInstancesCommand: ${JSON.stringify(describeInstancesCommand)}`);
+
+            const response = await ec2Client.send(describeInstancesCommand);
+            console.info(`Describe instances response ${JSON.stringify(response)}`);
+            const instance = response.Reservations[0].Instances[0];
+            const privateId = instance.NetworkInterfaces[0].PrivateIpAddress;
+            const name = instance.Tags.find((tag) => tag.Key === "Name").Value;
+
+            return {"name": name, "privateIp": privateIp};
+          }
+
+          async function assumeRole(accountId) {
+            console.log(`Attempting to assume role arn:aws:iam::${accountId}:/role/GetInstanceDetailsLambdaCrossAccountRole`);
+            const stsClient = new STSClient();
+            const assumeRoleCommand = new AssumeRoleCommand({
+              RoleArn: `arn:aws:iam::${accountId}:/role/GetInstanceDetailsLambdaCrossAccountRole`,
+              RoleSessionName: "network-account-dns-update-lambda"
+            });
+
+            const assumeRoleResponse = await stsClient.send(assumeRoleCommand);
+
+            return assumeRoleResponse.Credentials;
+          }
+
+          async function sendErrorNotification(message) {
+            const publishCommand = new PublishCommand({
+              TargetArn: process.env.SNS_TOPIC_ARN,
+              Message: message,
+              Subject: "DNS record creation failure"
+            });
+
+            const notificationResponse = await snsClient.send(publishCommand);
+            console.info(`DNS record creation failure notification response ${JSON.stringify(notificationResponse)}`);
+          }
+      
+      TracingConfig:
+        Mode: Active
+      Tags:
+        - Key: Name
+          Value: create-dns-record
+
+  # Role assumed by Lambda in the network account that will allow it to create a DNS record for new instances
+  CreateDnsRecordLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CreateDnsRecordLambdaExecutionRole
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Principal:
+              Service: lambda.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AllowCreateDnsRecords
+          PolicyDocument:
+            Statement:
+              -
+                Sid: AllowDnsUpdatesOnAllZones
+                Effect: Allow
+                Action:
+                  - route53:ChangeResourceRecordSets
+                  - route53:ListResourceRecordSets
+                  - route53:GetHostedZone
+                Resource: "arn:aws:route53:::hostedzone/*"
+              -
+                Sid: AllowAssumeDescribeInstancesRoleOnAllAccounts
+                Effect: Allow
+                Action:
+                  - sts:AssumeRole                  
+                Resource: "arn:aws:iam::*:role/GetInstanceDetailsLambdaCrossAccountRole"
+              -
+                Sid: AllowSnsPublish
+                Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref DnsRecordFailureNotificationTopic
+
+  # Resource based policy on the Lambda that allows EventBridge to invoke it
+  CreateDnsRecordLambdaEventBridgePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref CreateDnsRecordLambda      
+      PrincipalOrgID: !Ref OrganizationId
+      Principal: events.amazonaws.com
+      

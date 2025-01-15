@@ -1,0 +1,1 @@
+1) You must have CloudTrail enabled for automatic DNS record creation to work. It is recommended that you create an organization trail so that all events across the organization are captured.

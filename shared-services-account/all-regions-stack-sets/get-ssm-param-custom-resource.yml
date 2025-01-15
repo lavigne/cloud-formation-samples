@@ -1,0 +1,111 @@
+Parameters:
+  OrganizationId:
+    Type: String
+    Default: o-jyj5yzbnz0
+
+Resources:
+  GetSsmParameterLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      # we attach the region to the role as a safeguard against anyone running this template in
+      # multiple regions - naming an IAM resource can cause an unrecoverable error if you reuse
+      # the same template in multiple regions. See the warning under the RoleName property here:
+      # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-iam-role.html#aws-resource-iam-role-properties
+      RoleName: !Sub 'get-ssm-parameter-lambda-role-${AWS::Region}'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess
+      AssumeRolePolicyDocument:
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+
+  # Create a Lambda that can look up SSM parameters in different accounts and regions than
+  # where the CloudFormation template is being run. This is very useful for things like cross-region 
+  # and cross-account network set up where you have values that you want to share between 
+  # accounts/regions, e.g. workloads account needs to get subnet ids from netowrking account.
+  # IMPORTANT: To access parameters that reside in another account, you must share those parameters
+  # with the account that is trying to access them or the organization. Also, this Lambda must
+  # exist in the region where it's being called, accessing a Lambda as a custom CloudFormation
+  # resource from a different region than where the CloudFormation template is being run doesn't work.
+  GetSsmParameterLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'get-ssm-parameter-${AWS::Region}'
+      Description: >
+        Function to get an SSM parameter value. 
+        Input Parameters:
+          parameterName: 
+          accountId: (Optional, defaults to the account ID where the Lambda function resides)
+          region: (Optional, defaults to the region where the Lambda function resides)
+      Runtime: nodejs20.x
+      Timeout: 60
+      Role: !GetAtt GetSsmParameterLambdaRole.Arn
+      Handler: index.handler
+      Code:
+        ZipFile: |
+          const { SSMClient, GetParameterCommand } = require("@aws-sdk/client-ssm");
+          const response = require('cfn-response');
+
+          exports.handler = async (event, context) => {
+            // note the use of event.ResourceProperties.parameterName instead of just event.parameterName
+            // this is required because the lambda function is called via CloudFormation custom resource, 
+            // which puts user-defined parameters in the ResourceProperties attribute.
+            const parameterName = event.ResourceProperties.parameterName;
+            const region = event.ResourceProperties.region ? event.ResourceProperties.region : process.env.AWS_REGION;
+            const accountId = event.ResourceProperties.accountId ? event.ResourceProperties.accountId : context.invokedFunctionArn.split(":")[4];
+            console.info(`parameterName: ${parameterName}`);
+            console.info(`region: ${region}`);
+            console.info(`accountId: ${accountId}`);
+            const client = new SSMClient({region: region});            
+
+            const input = {              
+              Name: `arn:aws:ssm:${region}:${accountId}:parameter${parameterName}`,
+              WithDecryption: true,
+            };
+            
+            const responseData = {};
+            let responseStatus = response.SUCCESS; 
+            
+            try {
+              const command = new GetParameterCommand(input);
+              const data = await client.send(command);  
+              responseData.parameterValue =  data.Parameter.Value;
+              console.info(`parameter value: ${responseData.parameterValue}`);              
+            } catch(error) {
+              responseStatus = response.FAILED;
+              console.error(`Error getting parameter: ${error.message}`);              
+            }  
+            
+            // send response to CloudFormation
+            await sendResponse(event, context, responseStatus, responseData);
+          };
+
+          // response.send from cfn-response lib still uses callbacks, so we need to create function that 
+          // does async/await to ensure the response gets sent back to CloudFormation before the function exits
+          // otherwise, the CloudFormation stack will get stuck in CREATE_IN_PROGRESS waiting for the response
+          function sendResponse(event, context, status, data) {
+
+            return new Promise((resolve, reject) => {
+              response.send(event, context, status, data);
+            });
+          }
+      TracingConfig:
+        Mode: Active
+      Tags:
+        - Key: Name
+          Value: cloud-formation-get-ssm-parameter
+
+  # allow cloudformation in any account in the org to call the function
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref GetSsmParameterLambda      
+      PrincipalOrgID: !Ref OrganizationId
+      Principal: '*'
