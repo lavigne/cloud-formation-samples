@@ -207,7 +207,7 @@ Resources:
             let responseData = {};
             const instanceDetails = await getInstanceDetails(instanceId, accountId, region);
             const instanceName = instanceDetails.name;
-            const recordValue = isntanceDetails.privateIp;
+            const recordValue = instanceDetails.privateIp;
 
             if(instanceName) {
               let changeDnsRecordSetsInput = {
@@ -294,17 +294,18 @@ Resources:
             const response = await ec2Client.send(describeInstancesCommand);
             console.info(`Describe instances response ${JSON.stringify(response)}`);
             const instance = response.Reservations[0].Instances[0];
-            const privateId = instance.NetworkInterfaces[0].PrivateIpAddress;
+            const privateIp = instance.NetworkInterfaces[0].PrivateIpAddress;
             const name = instance.Tags.find((tag) => tag.Key === "Name").Value;
 
             return {"name": name, "privateIp": privateIp};
           }
 
           async function assumeRole(accountId) {
-            console.log(`Attempting to assume role arn:aws:iam::${accountId}:/role/GetInstanceDetailsLambdaCrossAccountRole`);
+            const roleArn = `arn:aws:iam::${accountId}:role/GetInstanceDetailsLambdaCrossAccountRole`;
+            console.log(`Attempting to assume role ${roleArn}`);
             const stsClient = new STSClient();
             const assumeRoleCommand = new AssumeRoleCommand({
-              RoleArn: `arn:aws:iam::${accountId}:/role/GetInstanceDetailsLambdaCrossAccountRole`,
+              RoleArn: roleArn,
               RoleSessionName: "network-account-dns-update-lambda"
             });
 
@@ -373,7 +374,7 @@ Resources:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !Ref CreateDnsRecordLambda      
-      PrincipalOrgID: !Ref OrganizationId
+      FunctionName: !Ref CreateDnsRecordLambda
       Principal: events.amazonaws.com
+      SourceArn: !GetAtt CreateEc2DnsEntryEventBridgeRule.Arn
       

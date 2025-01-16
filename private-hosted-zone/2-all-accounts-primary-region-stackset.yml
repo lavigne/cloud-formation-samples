@@ -2,7 +2,7 @@ Description: >
   This template creates global resources that are required in all member accounts to set up
   a private hosted zone with automatic DNS entry creation for new EC2 instances. For example, 
   a cross-account role is created in member accounts that is assumed by a Lambda function 
-  in the networking account  responsible for automatically creating DNS entries for new 
+  in the networking account responsible for automatically creating DNS entries for new 
   instances in member accounts. This template needs to be run as a stack set in the 
   management account and deployed to the primary region in all member accounts in the organization.
 
@@ -33,7 +33,7 @@ Resources:
             Statement:
               - Effect: Allow
                 Action: events:PutEvents
-                Resource: !Sub arn:aws:events:${NetworkAccountId}:${AWS::AccountId}:event-bus/default
+                Resource: !Sub arn:aws:events:${AWS::Region}:${NetworkAccountId}:event-bus/default
                     
   # Role assumed by CreateDnsRecordLambda in the network account that will allow it to describe instances
   # in other accounts so it can get the name tag from an instance and remove the DNS records for an

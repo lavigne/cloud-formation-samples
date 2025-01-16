@@ -36,7 +36,7 @@ Resources:
           # This role is created in 2-all-accounts-primary-region-stackset.yml.
           # Note that we can't export/import the ARN because the template that creates the role
           # might have been run in a different region. An alternative to hard-coding this ARN is
-          # to save update the 2-all-accounts-primary-region-stackset.yml template to save the 
+          # to update the 2-all-accounts-primary-region-stackset.yml template to save the 
           # ARN of the role in an SSM parameter, then set up the get-ssm-param lambda as
           # a custom CloudFormation resource in this template to retrieve the role ARN from SSM.
           RoleArn: !Sub 'arn:aws:iam::${AWS::AccountId}:role/Ec2InstanceCreateEventBridgeRuleRole'
