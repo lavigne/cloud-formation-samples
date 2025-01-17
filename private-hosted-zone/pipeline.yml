@@ -10,7 +10,7 @@ Mappings:
 Parameters:
   DomainName:
     Type: String
-    Descript: Domain name for the private hosted zone
+    Description: Domain name for the private hosted zone
     Default: example.com
   OrganizationRoot:
     Type: String
@@ -22,8 +22,8 @@ Parameters:
     Default: us-east-2
   Regions:
     Description: List of regions where workloads will run that should have a DNS entries in the private hosted zone
-    Type: CommaDelimitedList
-    Default: us-east-1,us-east-2,us-west-2
+    Type: String
+    Default: us-east-1,us-east-2,us-west-1,us-west-2
   ConnectionArn:
     Description: The CodeConnections ARN for your source repository.
     Type: String
@@ -83,7 +83,7 @@ Resources:
               Configuration:
                 ActionMode: CREATE_UPDATE
                 Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND,CAPABILITY_NAMED_IAM
-                StackName: private-hosted-network-account-primary-region
+                StackName: private-hosted-zone-network-account-primary-region
                 TemplatePath: !FindInMap [ Names, CloudFormationTemplates, NetworkAccountPrimaryRegion ]
                 RoleArn: !GetAtt CloudFormationRole.Arn
                 OutputFileName: output.json
@@ -120,7 +120,7 @@ Resources:
               Configuration:
                 PermissionModel: SERVICE_MANAGED
                 DeploymentTargets: !Ref OrganizationRoot
-                Regions: !Ref PrimaryRegion
+                Regions: !Ref Regions
                 Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND,CAPABILITY_NAMED_IAM
                 StackSetName: private-hosted-zone-all-accounts-all-regions
                 TemplatePath: !FindInMap [ Names, CloudFormationTemplates, AllAccountsAllRegions ]                
