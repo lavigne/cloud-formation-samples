@@ -27,7 +27,7 @@ Parameters:
   ConnectionArn:
     Description: The CodeConnections ARN for your source repository.
     Type: String
-    Default: arn:aws:codeconnections:us-east-2:685976753954:connection/c8b9b947-30f6-4b9f-99f8-48ba0d7168d5
+    Default: arn:aws:codeconnections:us-east-2:685976753954:connection/02f10393-2a66-4087-8287-9a78586326e5
   Repository:
     Description: The full repository ID to use with your CodeConnections connection.
     Type: String

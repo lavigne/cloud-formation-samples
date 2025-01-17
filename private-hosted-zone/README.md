@@ -1,1 +1,2 @@
-1) You must have CloudTrail enabled for automatic DNS record creation to work. It is recommended that you create an organization trail so that all events across the organization are captured.
+1) You need to setup a connection to your GitHub repo where these CloudFormation templates reside. Be sure to use the "Install a new app" option when setting up the connection. This installs the "AWS Connector for GitHub" app in your GitHub account which allows it to access your repositories using OAuth.
+2) You must have CloudTrail enabled for automatic DNS record creation to work. It is recommended that you create an organization trail so that all events across the organization are captured.
