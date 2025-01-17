@@ -1,0 +1,416 @@
+Mappings:
+  Names:
+    CreatedResources:
+      CodePipeline: private-hosted-zone-pipeline
+    CloudFormationTemplates:
+      NetworkAccountPrimaryRegion: SourceOutput::private-hosted-zone/1-network-account-primary-region.yml
+      AllAccountsPrimaryRegion: SourceOutput::private-hosted-zone/2-all-accounts-primary-region-stackset.yml
+      AllAccountsAllRegions: SourceOutput::private-hosted-zone/3-all-accounts-all-regions-stackset.yml
+
+Parameters:
+  DomainName:
+    Type: String
+    Descript: Domain name for the private hosted zone
+    Default: example.com
+  OrganizationRoot:
+    Type: String
+    Description: AWS Organizations Root OU ID
+    Default: r-afb3
+  PrimaryRegion:
+    Type: String
+    Description: Primary region of AWS Organization (where Control Tower is managed)
+    Default: us-east-2
+  Regions:
+    Description: List of regions where workloads will run that should have a DNS entries in the private hosted zone
+    Type: CommaDelimitedList
+    Default: us-east-1,us-east-2,us-west-2
+  ConnectionArn:
+    Description: The CodeConnections ARN for your source repository.
+    Type: String
+    Default: arn:aws:codeconnections:us-east-2:685976753954:connection/c8b9b947-30f6-4b9f-99f8-48ba0d7168d5
+  Repository:
+    Description: The full repository ID to use with your CodeConnections connection.
+    Type: String
+    Default: lavigne/cloud-formation-samples
+  BranchName:
+    Description: The branch name to use with your CodeConnections connection.
+    Type: String
+    Default: main
+  RetentionPolicy:
+    Description: Define if you'd like the resource retained or deleted when the CloudFormation stack is deleted.
+    Type: String
+    Default: Delete
+    AllowedValues:
+      - Delete
+      - Retain
+
+Resources:
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      ArtifactStore:
+        Location: !Ref CodePipelineArtifactsBucket
+        Type: S3
+      ExecutionMode: QUEUED
+      Name: !FindInMap [ Names, CreatedResources, CodePipeline ]
+      PipelineType: V2
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: CodeConnections
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              Configuration:
+                ConnectionArn: !Ref ConnectionArn
+                FullRepositoryId: !Ref Repository
+                BranchName: !Ref BranchName
+              OutputArtifacts:
+                - Name: SourceOutput
+              RoleArn: !GetAtt CodePipelineSourceActionRole.Arn
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            - Name: DeployNetworkAccountPrimaryRegionResources
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND,CAPABILITY_NAMED_IAM
+                StackName: private-hosted-network-account-primary-region
+                TemplatePath: !FindInMap [ Names, CloudFormationTemplates, NetworkAccountPrimaryRegion ]
+                RoleArn: !GetAtt CloudFormationRole.Arn
+                OutputFileName: output.json
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: DeployOutput
+              RoleArn: !GetAtt CodePipelineDeployActionRole.Arn
+              RunOrder: 1
+              # https://docs.aws.amazon.com/codepipeline/latest/userguide/action-reference-StackSets.html#action-reference-StackSet
+            - Name: DeployAllAccountsPrimaryRegionResources
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormationStackSet
+                Version: 1
+              Configuration:
+                PermissionModel: SERVICE_MANAGED
+                DeploymentTargets: !Ref OrganizationRoot
+                Regions: !Ref PrimaryRegion
+                Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND,CAPABILITY_NAMED_IAM
+                StackSetName: private-hosted-zone-all-accounts-primary-region
+                TemplatePath: !FindInMap [ Names, CloudFormationTemplates, AllAccountsPrimaryRegion ]                
+              InputArtifacts:
+                - Name: SourceOutput
+              RoleArn: !GetAtt CodePipelineDeployActionRole.Arn
+              RunOrder: 2
+            - Name: DeployAllAccountsAllRegionsResources
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormationStackSet
+                Version: 1
+              Configuration:
+                PermissionModel: SERVICE_MANAGED
+                DeploymentTargets: !Ref OrganizationRoot
+                Regions: !Ref PrimaryRegion
+                Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND,CAPABILITY_NAMED_IAM
+                StackSetName: private-hosted-zone-all-accounts-all-regions
+                TemplatePath: !FindInMap [ Names, CloudFormationTemplates, AllAccountsAllRegions ]                
+              InputArtifacts:
+                - Name: SourceOutput
+              RoleArn: !GetAtt CodePipelineDeployActionRole.Arn
+              RunOrder: 3
+          OnFailure:
+            Result: ROLLBACK
+          BeforeEntry:
+            Conditions:
+              - Result: FAIL
+                Rules:
+                  - Name: MyDeploymentWindowRule
+                    RuleTypeId:
+                      Category: Rule
+                      Owner: AWS
+                      Provider: DeploymentWindow
+                      Version: '1'
+                    Configuration:
+                      Cron: '* * * * * ? *'
+                      TimeZone: 'PST'
+    DependsOn:
+      - CodePipelineRoleDefaultPolicy
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+        Version: '2012-10-17'
+  CodePipelineRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - s3:Abort*
+              - s3:DeleteObject*
+              - s3:GetBucket*
+              - s3:GetObject*
+              - s3:List*
+              - s3:PutObject
+              - s3:PutObjectLegalHold
+              - s3:PutObjectRetention
+              - s3:PutObjectTagging
+              - s3:PutObjectVersionTagging
+            Effect: Allow
+            Resource:
+              - !GetAtt CodePipelineArtifactsBucket.Arn
+              - !Join
+                - '/'
+                - - !GetAtt CodePipelineArtifactsBucket.Arn
+                  - '*'
+          - Action:
+              - s3:PutObjectAcl
+              - s3:PutObjectVersionAcl
+            Effect: Allow
+            Resource: !Join
+              - /
+              - - !GetAtt CodePipelineArtifactsBucket.Arn
+                - '*'
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Resource:
+              - !GetAtt CodePipelineSourceActionRole.Arn
+              - !GetAtt CodePipelineDeployActionRole.Arn
+        Version: '2012-10-17'
+      PolicyName: CodePipelineRoleDefaultPolicy
+      Roles:
+        - !Ref CodePipelineRole
+  CodePipelineSourceActionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+        Version: '2012-10-17'
+  CodePipelineSourceActionRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: codestar-connections:UseConnection
+            Effect: Allow
+            Resource: !Ref ConnectionArn
+          - Action:
+              - s3:Abort*
+              - s3:DeleteObject*
+              - s3:PutObject
+              - s3:PutObjectLegalHold
+              - s3:PutObjectRetention
+              - s3:PutObjectTagging
+              - s3:PutObjectVersionTagging
+            Effect: Allow
+            Resource:
+              - !GetAtt CodePipelineArtifactsBucket.Arn
+              - !Join
+                - '/'
+                - - !GetAtt CodePipelineArtifactsBucket.Arn
+                  - '*'
+          - Action:
+              - s3:PutObjectAcl
+              - s3:PutObjectVersionAcl
+            Effect: Allow
+            Resource: !Join
+              - /
+              - - !GetAtt CodePipelineArtifactsBucket.Arn
+                - '*'
+        Version: '2012-10-17'
+      PolicyName: CodePipelineSourceActionRoleDefaultPolicy
+      Roles:
+        - !Ref CodePipelineSourceActionRole
+  CodePipelineDeployActionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+        Version: '2012-10-17'
+  CodePipelineDeployActionRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - cloudformation:*
+            Effect: Allow
+            Resource: '*'
+          - Action: iam:PassRole
+            Condition:
+              StringEqualsIfExists:
+                iam:PassedToService:
+                  - cloudformation.amazonaws.com
+            Effect: Allow
+            Resource: '*'
+          - Action:
+              - s3:GetBucket*
+              - s3:GetObject*
+              - s3:List*
+              - s3:PutObject
+              - s3:PutObjectLegalHold
+              - s3:PutObjectRetention
+              - s3:PutObjectTagging
+              - s3:PutObjectVersionTagging
+            Effect: Allow
+            Resource:
+              - !GetAtt CodePipelineArtifactsBucket.Arn
+              - !Join
+                - '/'
+                - - !GetAtt CodePipelineArtifactsBucket.Arn
+                  - '*'
+          - Action:
+              - s3:PutObjectAcl
+              - s3:PutObjectVersionAcl
+            Effect: Allow
+            Resource: !Join
+              - /
+              - - !GetAtt CodePipelineArtifactsBucket.Arn
+                - '*'
+        Version: '2012-10-17'
+      PolicyName: CodePipelineDeployActionRoleDefaultPolicy
+      Roles:
+        - !Ref CodePipelineDeployActionRole
+  CloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - cloudformation.amazonaws.com
+                - codepipeline.amazonaws.com
+        Version: '2012-10-17'
+  CloudFormationRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - cloudformation:*
+            Effect: Allow
+            Resource:
+              - !Sub 
+                - 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${pipelineName}'
+                - pipelineName: !FindInMap [ Names, CreatedResources, CodePipeline ]
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Resource:
+              - !GetAtt CodePipelineRole.Arn
+          - Action:
+              - s3:GetBucket*
+              - s3:GetObject*
+              - s3:List*
+              - s3:PutObject
+              - s3:PutObjectLegalHold
+              - s3:PutObjectRetention
+              - s3:PutObjectTagging
+              - s3:PutObjectVersionTagging
+            Effect: Allow
+            Resource:
+              - !GetAtt CodePipelineArtifactsBucket.Arn
+              - !Join
+                - '/'
+                - - !GetAtt CodePipelineArtifactsBucket.Arn
+                  - '*'
+          - Action:
+              - s3:PutObjectAcl
+              - s3:PutObjectVersionAcl
+            Effect: Allow
+            Resource: !Join
+              - /
+              - - !GetAtt CodePipelineArtifactsBucket.Arn
+                - '*'
+          - Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Effect: Allow
+            Resource:
+              - !Sub 
+                - 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codepipeline/${pipelineName}'
+                - pipelineName: !FindInMap [ Names, CreatedResources, CodePipeline ]
+              - !Sub 
+                - 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codepipeline/${pipelineName}:*'
+                - pipelineName: !FindInMap [ Names, CreatedResources, CodePipeline ]
+        Version: '2012-10-17'
+      PolicyName: CloudFormationDefaultPolicy
+      Roles:
+        - !Ref CloudFormationRole
+  CloudFormationRoleResourceCreationPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action: "*"
+            Resource: "*"
+      PolicyName: CloudFormationResourceCreationPolicy
+      Roles:
+        - !Ref CloudFormationRole
+  CodePipelineArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+    UpdateReplacePolicy: !Ref RetentionPolicy
+    DeletionPolicy: !Ref RetentionPolicy
+  CodePipelineArtifactsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CodePipelineArtifactsBucket
+      PolicyDocument:
+        Statement:
+          - Action: s3:*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+            Effect: Deny
+            Principal:
+              AWS: '*'
+            Resource:
+              - !GetAtt CodePipelineArtifactsBucket.Arn
+              - !Join
+                - '/'
+                - - !GetAtt CodePipelineArtifactsBucket.Arn
+                  - '*'
+        Version: '2012-10-17'
+
+Outputs:
+  DomainName:
+    Description: A reference to the domain name used by the private hosted zone
+    Value: !Ref DomainName
+    Export:
+      Name: private-hosted-zone-domain-name

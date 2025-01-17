@@ -6,10 +6,6 @@ Parameters:
     Type: String
     Default: o-jyj5yzbnz0
 
-  HostedZoneDomain:
-    Type: String
-    Default: example.com
-
   DnsRecordFailureNotificationEmailAddress:
     Type: String
     Default: chad.lavigne@solutiondesign.com
@@ -39,7 +35,7 @@ Resources:
     Properties: 
       HostedZoneConfig: 
         Comment: Example private hosted zone
-      Name: !Ref HostedZoneDomain
+      Name: !ImportValue private-hosted-zone-domain-name
       VPCs: 
         - 
           VPCId: !Ref NetworkVpc
