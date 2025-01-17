@@ -23,7 +23,7 @@ Parameters:
   Regions:
     Description: List of regions where workloads will run that should have a DNS entries in the private hosted zone
     Type: String
-    Default: us-east-1,us-east-2,us-west-1,us-west-2
+    Default: us-east-1,us-east-2,us-west-1
   ConnectionArn:
     Description: The CodeConnections ARN for your source repository.
     Type: String
