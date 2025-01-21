@@ -22,11 +22,6 @@ Parameters:
     Default: chad.lavigne@solutiondesign.com
     Description: Email address where DNS record auto-creation failure notices will be sent
   
-  OrganizationRoot:
-    Type: String
-    Description: AWS Organizations Root OU ID
-    Default: r-4kt6
-  
   PrimaryRegion:
     Type: String
     Description: Primary region of AWS Organization (where Control Tower is managed)
@@ -41,10 +36,12 @@ Parameters:
     Type: String
     Default: 476114134497
   
-  WorkloadAccountId:
-    Description: List of accounts where workloads will run that should have a DNS entries in the private hosted zone
+  WorkloadAccounts:
+    Description: > 
+      Either a list of AWS account IDs OR a list of AWS Organization OUs containing accounts where workloads will run that should 
+      have a DNS entries in the private hosted zone. To include all accounts in the organization, use the Organization Root OU ID.
     Type: String
-    Default: us-east-1,us-east-2,us-west-1
+    Default: 481665105776
   
   ConnectionArn:
     Description: The CodeConnections ARN for your source repository.
@@ -127,7 +124,7 @@ Resources:
                 Version: 1
               Configuration:
                 PermissionModel: SERVICE_MANAGED
-                DeploymentTargets: !Ref OrganizationRoot
+                DeploymentTargets: !Ref WorkloadAccounts
                 Regions: !Ref PrimaryRegion
                 Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND,CAPABILITY_NAMED_IAM
                 StackSetName: private-hosted-zone-all-accounts-primary-region
@@ -144,7 +141,7 @@ Resources:
                 Version: 1
               Configuration:
                 PermissionModel: SERVICE_MANAGED
-                DeploymentTargets: !Ref OrganizationRoot
+                DeploymentTargets: !Ref WorkloadAccounts
                 Regions: !Ref Regions
                 Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND,CAPABILITY_NAMED_IAM
                 StackSetName: private-hosted-zone-all-accounts-all-regions

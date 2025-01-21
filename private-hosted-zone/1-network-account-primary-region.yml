@@ -87,7 +87,7 @@ Resources:
     Condition: AddEmailNotificationSubscription
     Properties:
       TopicArn: !Ref DnsRecordFailureNotificationTopic
-      Endpoint: !Ref DnsRecordFailureNotificationEmailAddress
+      Endpoint: !ImportValue dns-record-failure-notification-email
       Protocol: email
 
   CreateDnsRecordLambda:
