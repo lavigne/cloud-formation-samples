@@ -12,30 +12,55 @@ Parameters:
     Type: String
     Description: Domain name for the private hosted zone
     Default: example.com
+  
+  OrganizationId:
+    Type: String
+    Default: o-wk19zr7ssx
+  
+  DnsRecordFailureNotificationEmailAddress:
+    Type: String
+    Default: chad.lavigne@solutiondesign.com
+    Description: Email address where DNS record auto-creation failure notices will be sent
+  
   OrganizationRoot:
     Type: String
     Description: AWS Organizations Root OU ID
-    Default: r-afb3
+    Default: r-4kt6
+  
   PrimaryRegion:
     Type: String
     Description: Primary region of AWS Organization (where Control Tower is managed)
     Default: us-east-2
+  
   Regions:
     Description: List of regions where workloads will run that should have a DNS entries in the private hosted zone
     Type: String
     Default: us-east-1,us-east-2,us-west-1
+  
+  NetworkAccountId:
+    Type: String
+    Default: 476114134497
+  
+  WorkloadAccountId:
+    Description: List of accounts where workloads will run that should have a DNS entries in the private hosted zone
+    Type: String
+    Default: us-east-1,us-east-2,us-west-1
+  
   ConnectionArn:
     Description: The CodeConnections ARN for your source repository.
     Type: String
     Default: arn:aws:codeconnections:us-east-2:685976753954:connection/02f10393-2a66-4087-8287-9a78586326e5
+  
   Repository:
     Description: The full repository ID to use with your CodeConnections connection.
     Type: String
     Default: lavigne/cloud-formation-samples
+  
   BranchName:
     Description: The branch name to use with your CodeConnections connection.
     Type: String
     Default: main
+  
   RetentionPolicy:
     Description: Define if you'd like the resource retained or deleted when the CloudFormation stack is deleted.
     Type: String
@@ -414,3 +439,27 @@ Outputs:
     Value: !Ref DomainName
     Export:
       Name: private-hosted-zone-domain-name
+
+  OrganizationId:
+    Description: A reference to the AWS Organization ID
+    Value: !Ref OrganizationId
+    Export:
+      Name: organization-id
+
+  NetworkAccountId:
+    Description: A reference to the Network Account ID
+    Value: !Ref NetworkAccountId
+    Export:
+      Name: network-account-id
+
+  DnsRecordFailureNotificationEmailAddress:
+    Description: A reference to the email address where DNS record creation failure notices should go
+    Value: !Ref DnsRecordFailureNotificationEmailAddress
+    Export:
+      Name: dns-record-failure-notification-email
+
+  PrimaryRegion:
+    Description: A reference to the primary region name
+    Value: !Ref PrimaryRegion
+    Export:
+      Name: primary-region

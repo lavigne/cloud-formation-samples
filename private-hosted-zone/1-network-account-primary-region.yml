@@ -1,20 +1,10 @@
 Description: >
   This template creates a private hosted zone in the primary region of the network account.
 
-Parameters:
-  OrganizationId:
-    Type: String
-    Default: o-jyj5yzbnz0
-
-  DnsRecordFailureNotificationEmailAddress:
-    Type: String
-    Default: chad.lavigne@solutiondesign.com
-    Description: Email address where DNS record auto-creation failure notices will be sent
-
 Conditions:
   AddEmailNotificationSubscription: !Not
     - !Equals
-      - !Ref DnsRecordFailureNotificationEmailAddress
+      - !ImportValue dns-record-failure-notification-email
       - ''
 
 Resources:
@@ -65,7 +55,7 @@ Resources:
         Resource: !Sub 'arn:aws:events:*:${AWS::AccountId}:event-bus/default'
         Condition:
           StringEquals:
-            aws:PrincipalOrgID: !Ref OrganizationId
+            aws:PrincipalOrgID: !ImportValue organization-id
 
   # EventBridge rule to listen for ec2 instance create and terminate events in member accounts
   CreateEc2DnsEntryEventBridgeRule:

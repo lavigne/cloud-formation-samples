@@ -3,15 +3,6 @@ Description: >
   It is meant to be deployed as a stack set in all org accounts and all regions where you need to
   create infrastructure that might be part of the hosted zone.
 
-Parameters:
-  NetworkAccountId:
-    Type: String
-    Default: 685976753954
-
-  PrimaryRegion:
-    Type: String
-    Default: us-east-2
-
 Resources:
 
   # Send EC2 instance create and terminate events to the default EventBridge bus in the network account,
@@ -32,7 +23,10 @@ Resources:
       Targets:
         -
           Id: NetworkAccountDefaultEventBridgeBus
-          Arn: !Sub 'arn:aws:events:${PrimaryRegion}:${NetworkAccountId}:event-bus/default'
+          Arn: !Sub 
+            - 'arn:aws:events:${primaryRegion}:${networkAccountId}:event-bus/default'
+            - primaryRegion: !ImportValue primary-region
+              networkAccountId: !ImportValue network-account-id
           # This role is created in 2-all-accounts-primary-region-stackset.yml.
           # Note that we can't export/import the ARN because the template that creates the role
           # might have been run in a different region. An alternative to hard-coding this ARN is
