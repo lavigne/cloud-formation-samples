@@ -1,12 +1,6 @@
 Description: >
   This template creates a private hosted zone in the primary region of the network account.
 
-Conditions:
-  AddEmailNotificationSubscription: !Not
-    - !Equals
-      - !ImportValue dns-record-failure-notification-email
-      - ''
-
 Resources:
   NetworkVpc:
     Type: AWS::EC2::VPC
@@ -84,7 +78,6 @@ Resources:
 
   DnsRecordFailureNotificationTopicSubscription:
     Type: AWS::SNS::Subscription
-    Condition: AddEmailNotificationSubscription
     Properties:
       TopicArn: !Ref DnsRecordFailureNotificationTopic
       Endpoint: !ImportValue dns-record-failure-notification-email
