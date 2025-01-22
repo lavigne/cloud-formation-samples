@@ -21,3 +21,6 @@ This solution creates a Route53 private hosted zone as well as resources to auto
 - OrganizationId
 - PrimaryRegion
 - Regions
+
+## Troubleshooting
+If you're not seeing DNS entries created for new EC2 instances, first be sure that CloudTrail is enabled in the account where the EC2 instance was created.
