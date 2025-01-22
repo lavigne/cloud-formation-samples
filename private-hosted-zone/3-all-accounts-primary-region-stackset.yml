@@ -6,6 +6,12 @@ Description: >
   instances in member accounts. This template needs to be run as a stack set in the 
   management account and deployed to the primary region in all member accounts in the organization.
 
+Parameters:
+  NetworkAccountId:
+    Type: String
+    Description: AWS Account ID of the network account where the hosted zone will be created
+    Default: 476114134497
+
 Resources:
 
   # Role used by the EventBridge rule that listens for EC2 start/terminate events in member accounts.
@@ -31,7 +37,7 @@ Resources:
                 Resource: 
                   !Sub 
                     - 'arn:aws:events:${AWS::Region}:${networkAccountId}:event-bus/default'
-                    - networkAccountId: !ImportValue network-account-id
+                    - networkAccountId: !Ref NetworkAccountId
                     
   # Role assumed by CreateDnsRecordLambda in the network account that will allow it to describe instances
   # in other accounts so it can get the name tag from an instance and remove the DNS records for an
@@ -49,7 +55,7 @@ Resources:
               # allow the role used by the lambda in the network account to assume this role so it can get instance details
               AWS: !Sub 
                 - 'arn:aws:iam::${networkAccountId}:role/CreateDnsRecordLambdaExecutionRole' 
-                - networkAccountId: !ImportValue network-account-id
+                - networkAccountId: !Ref NetworkAccountId
             Action:
               - sts:AssumeRole
       ManagedPolicyArns:

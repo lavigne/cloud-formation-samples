@@ -1,6 +1,22 @@
 Description: >
   This template creates a private hosted zone in the primary region of the network account.
 
+Parameters: 
+  DomainName:
+    Type: String
+    Description: Domain name for the private hosted zone
+    Default: example.com
+
+  OrganizationId:
+    Type: String
+    Description: AWS Organization ID
+    Default: o-wk19zr7ssx
+
+  DnsRecordFailureNotificationEmailAddress:
+    Type: String
+    Description: Email address where DNS record auto-creation failure notices will be sent
+    Default: chad.lavigne@solutiondesign.com 
+
 Resources:
   NetworkVpc:
     Type: AWS::EC2::VPC
@@ -19,7 +35,7 @@ Resources:
     Properties: 
       HostedZoneConfig: 
         Comment: Example private hosted zone
-      Name: !ImportValue private-hosted-zone-domain-name
+      Name: !Ref DomainName
       VPCs: 
         - 
           VPCId: !Ref NetworkVpc
@@ -49,7 +65,7 @@ Resources:
         Resource: !Sub 'arn:aws:events:*:${AWS::AccountId}:event-bus/default'
         Condition:
           StringEquals:
-            aws:PrincipalOrgID: !ImportValue organization-id
+            aws:PrincipalOrgID: !Ref OrganizationId
 
   # EventBridge rule to listen for ec2 instance create and terminate events in member accounts
   CreateEc2DnsEntryEventBridgeRule:
@@ -80,7 +96,7 @@ Resources:
     Type: AWS::SNS::Subscription
     Properties:
       TopicArn: !Ref DnsRecordFailureNotificationTopic
-      Endpoint: !ImportValue dns-record-failure-notification-email
+      Endpoint: !Ref DnsRecordFailureNotificationEmailAddress
       Protocol: email
 
   CreateDnsRecordLambda:

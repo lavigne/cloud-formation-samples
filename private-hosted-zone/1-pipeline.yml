@@ -39,12 +39,13 @@ Parameters:
   
   OrganizationId:
     Type: String
+    Description: AWS Organization ID
     Default: o-wk19zr7ssx
   
   DnsRecordFailureNotificationEmailAddress:
     Type: String
-    Default: chad.lavigne@solutiondesign.com
     Description: Email address where DNS record auto-creation failure notices will be sent
+    Default: chad.lavigne@solutiondesign.com    
   
   PrimaryRegion:
     Type: String
@@ -52,12 +53,13 @@ Parameters:
     Default: us-east-2
   
   WorkloadRegions:
-    Description: List of regions where workloads will run that should have a DNS entries in the private hosted zone
     Type: String
+    Description: List of regions where workloads will run that should have a DNS entries in the private hosted zone    
     Default: us-east-1,us-east-2,us-west-1
   
   NetworkAccountId:
     Type: String
+    Description: AWS Account ID of the network account where the hosted zone will be created
     Default: 476114134497
   
   WorkloadAccounts:
@@ -125,6 +127,10 @@ Resources:
                 TemplatePath: !FindInMap [ Names, CloudFormationTemplates, NetworkAccountPrimaryRegion ]
                 RoleArn: !GetAtt CloudFormationRole.Arn
                 OutputFileName: output.json
+                Parameters:
+                  - !Sub 'ParameterKey=DomainName,ParameterValue=${DomainName}'
+                  - !Sub 'ParameterKey=OrganizationId,ParameterValue=${OrganizationId}'
+                  - !Sub 'ParameterKey=DnsRecordFailureNotificationEmailAddress,ParameterValue=${DnsRecordFailureNotificationEmailAddress}'
               InputArtifacts:
                 - Name: SourceOutput
               OutputArtifacts:
@@ -144,7 +150,9 @@ Resources:
                 Regions: !Ref PrimaryRegion
                 Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND,CAPABILITY_NAMED_IAM
                 StackSetName: private-hosted-zone-all-accounts-primary-region
-                TemplatePath: !FindInMap [ Names, CloudFormationTemplates, AllAccountsPrimaryRegion ]                
+                TemplatePath: !FindInMap [ Names, CloudFormationTemplates, AllAccountsPrimaryRegion ]
+                Parameters:
+                  - !Sub 'ParameterKey=NetworkAccountId,ParameterValue=${NetworkAccountId}'                  
               InputArtifacts:
                 - Name: SourceOutput
               RoleArn: !GetAtt CodePipelineDeployActionRole.Arn
@@ -445,34 +453,3 @@ Resources:
                 - - !GetAtt CodePipelineArtifactsBucket.Arn
                   - '*'
         Version: '2012-10-17'
-
-Outputs:
-  DomainName:
-    Description: A reference to the domain name used by the private hosted zone
-    Value: !Ref DomainName
-    Export:
-      Name: private-hosted-zone-domain-name
-
-  OrganizationId:
-    Description: A reference to the AWS Organization ID
-    Value: !Ref OrganizationId
-    Export:
-      Name: organization-id
-
-  NetworkAccountId:
-    Description: A reference to the Network Account ID
-    Value: !Ref NetworkAccountId
-    Export:
-      Name: network-account-id
-
-  DnsRecordFailureNotificationEmailAddress:
-    Description: A reference to the email address where DNS record creation failure notices should go
-    Value: !Ref DnsRecordFailureNotificationEmailAddress
-    Export:
-      Name: dns-record-failure-notification-email
-
-  PrimaryRegion:
-    Description: A reference to the primary region name
-    Value: !Ref PrimaryRegion
-    Export:
-      Name: primary-region
