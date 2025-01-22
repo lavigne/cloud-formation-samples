@@ -1,11 +1,35 @@
+Metadata:
+  #Organize how the parameters appear in the AWS console
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'Hosted Zone Settings'
+        Parameters:
+          - DomainName
+          - DnsRecordFailureNotificationEmailAddress
+      - Label:
+          default: 'AWS Account Information'
+        Parameters:
+          - OrganizationId
+          - PrimaryRegion
+          - NetworkAccountId
+          - WorkloadRegions
+          - WorkloadAccounts
+      - Label:
+          default: 'Source Code Control'
+        Parameters:
+          - ConnectionArn
+          - Repository
+          - BranchName
+
 Mappings:
   Names:
     CreatedResources:
       CodePipeline: private-hosted-zone-pipeline
     CloudFormationTemplates:
-      NetworkAccountPrimaryRegion: SourceOutput::private-hosted-zone/1-network-account-primary-region.yml
-      AllAccountsPrimaryRegion: SourceOutput::private-hosted-zone/2-all-accounts-primary-region-stackset.yml
-      AllAccountsAllRegions: SourceOutput::private-hosted-zone/3-all-accounts-all-regions-stackset.yml
+      NetworkAccountPrimaryRegion: SourceOutput::private-hosted-zone/2-network-account-primary-region.yml
+      AllAccountsPrimaryRegion: SourceOutput::private-hosted-zone/3-all-accounts-primary-region-stackset.yml
+      AllAccountsAllRegions: SourceOutput::private-hosted-zone/4-all-accounts-all-regions-stackset.yml
 
 Parameters:
   DomainName:
@@ -27,7 +51,7 @@ Parameters:
     Description: Primary region of AWS Organization (where Control Tower is managed)
     Default: us-east-2
   
-  Regions:
+  WorkloadRegions:
     Description: List of regions where workloads will run that should have a DNS entries in the private hosted zone
     Type: String
     Default: us-east-1,us-east-2,us-west-1
@@ -46,25 +70,17 @@ Parameters:
   ConnectionArn:
     Description: The CodeConnections ARN for your source repository.
     Type: String
-    Default: arn:aws:codeconnections:us-east-2:685976753954:connection/02f10393-2a66-4087-8287-9a78586326e5
+    Default: arn:aws:codeconnections:us-east-2:476114134497:connection/064bbe91-e50e-44bb-ba06-d748fee571a6
   
   Repository:
-    Description: The full repository ID to use with your CodeConnections connection.
+    Description: The repository path, including the GitHub account name in the format "account/repository".
     Type: String
     Default: lavigne/cloud-formation-samples
   
   BranchName:
-    Description: The branch name to use with your CodeConnections connection.
+    Description: The branch name that the created CodePipeline will pull from.
     Type: String
     Default: main
-  
-  RetentionPolicy:
-    Description: Define if you'd like the resource retained or deleted when the CloudFormation stack is deleted.
-    Type: String
-    Default: Delete
-    AllowedValues:
-      - Delete
-      - Retain
 
 Resources:
   CodePipeline:
@@ -123,7 +139,7 @@ Resources:
                 Provider: CloudFormationStackSet
                 Version: 1
               Configuration:
-                PermissionModel: SERVICE_MANAGED
+                PermissionModel: SELF_MANAGED
                 DeploymentTargets: !Ref WorkloadAccounts
                 Regions: !Ref PrimaryRegion
                 Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND,CAPABILITY_NAMED_IAM
@@ -140,9 +156,9 @@ Resources:
                 Provider: CloudFormationStackSet
                 Version: 1
               Configuration:
-                PermissionModel: SERVICE_MANAGED
+                PermissionModel: SELF_MANAGED
                 DeploymentTargets: !Ref WorkloadAccounts
-                Regions: !Ref Regions
+                Regions: !Ref WorkloadRegions
                 Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND,CAPABILITY_NAMED_IAM
                 StackSetName: private-hosted-zone-all-accounts-all-regions
                 TemplatePath: !FindInMap [ Names, CloudFormationTemplates, AllAccountsAllRegions ]                
@@ -407,8 +423,8 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
-    UpdateReplacePolicy: !Ref RetentionPolicy
-    DeletionPolicy: !Ref RetentionPolicy
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
   CodePipelineArtifactsBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
