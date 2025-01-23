@@ -127,7 +127,7 @@ Resources:
                 TemplatePath: !FindInMap [ Names, CloudFormationTemplates, NetworkAccountPrimaryRegion ]
                 RoleArn: !GetAtt CloudFormationRole.Arn
                 OutputFileName: output.json
-                Parameters:
+                ParameterOverrides:
                   - !Sub 'ParameterKey=DomainName,ParameterValue=${DomainName}'
                   - !Sub 'ParameterKey=OrganizationId,ParameterValue=${OrganizationId}'
                   - !Sub 'ParameterKey=DnsRecordFailureNotificationEmailAddress,ParameterValue=${DnsRecordFailureNotificationEmailAddress}'
