@@ -1,5 +1,5 @@
 ## Overview
-This solution creates a Route53 private hosted zone as well as resources to automatically create DNS records in that hosted zone for EC2 instances created in workload accounts. Essentially, the hosted zone is created in a networking account along with a Lambda that responds to EC2 start and terminate events to automatically create/remote DNS entries for EC2 instances. For this to work, a CloudFormation stack set is run in all workload accounts that creates an EventBridge rule that listens for EC2 start/terminate events and forwards those events to the default EventBridge bus in the networking account to trigger the DNS record creation Lambda. The entire solution is deployed using an AWS CodePipeline that is created using CloudFormation. It is assumed that the CloudFormation templates that make up this solution are checked into a GitHub repository and a connection has been established between AWS and this GitHub repository. For instructions on how to set up this connection, see this documentation: https://docs.aws.amazon.com/codepipeline/latest/userguide/connections-github.html.
+This solution creates a Route53 private hosted zone as well as resources to automatically create DNS records in that hosted zone for EC2 instances created in workload accounts. Essentially, the hosted zone is created in a networking account along with a Lambda that responds to EC2 start and terminate events to automatically create/remote DNS entries for EC2 instances using the instance's name tag. For this to work, a CloudFormation stack set is run in all workload accounts that creates an EventBridge rule that listens for EC2 start/terminate events and forwards those events to the default EventBridge bus in the networking account which trigger the DNS record creation Lambda. The entire solution is deployed using an AWS CodePipeline that is created using CloudFormation. It is assumed that the CloudFormation templates that make up this solution are checked into a GitHub repository and a connection has been established between AWS and this GitHub repository. For instructions on how to set up this connection, see this documentation: https://docs.aws.amazon.com/codepipeline/latest/userguide/connections-github.html.
 
 ## Prerequisites
 
@@ -15,7 +15,7 @@ This solution creates a Route53 private hosted zone as well as resources to auto
 
 - DomainName - The domain name used by the private hosted zone.
 - DnsRecordFailureNotificationEmailAddress - Email address where DNS record creation failure notices will be sent.
-- OrganizationId - AWS Organization ID
+- OrganizationId - AWS Organization ID.
 - PrimaryRegion - Primary region used by the AWS Organization (where ControlTower is deployed).
 - NetworkAccountId - AWS account ID of the networking account where the private hosted zone will be created.
 - WorkloadRegions - AWS regions where EC2 instances will be run that should have DNS entries automatically created.

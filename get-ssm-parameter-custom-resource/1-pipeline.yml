@@ -1,0 +1,395 @@
+Mappings:
+  Names:
+    CreatedResources:
+      CodePipeline: get-ssm-parameter-custom-resource-pipeline
+    CloudFormationTemplates:
+      SharedServicesAccountPrimaryRegion: SourceOutput::get-ssm-parameter-custom-resource/2-shared-services-account-primary-region.yml
+      SharedServicesAccountAllRegions: SourceOutput::get-ssm-parameter-custom-resource/3-shared-services-account-all-regions-stackset.yml
+
+AWS::CloudFormation::Interface:
+  ParameterGroups:
+    - Label:
+        default: AWS Account Information
+      Parameters:
+        - OrganizationId
+        - PrimaryRegion
+        - SharedServicesAccountId
+        - WorkloadRegions
+        - WorkloadAccounts
+    - Label:
+        default: Source Code Control
+      Parameters:
+        - ConnectionArn
+        - Repository
+        - BranchName
+
+Parameters:  
+  
+  OrganizationId:
+    Type: String
+    Description: AWS Organization ID
+    Default: o-wk19zr7ssx
+
+  ConnectionArn:
+    Description: The CodeConnections ARN for your source repository.
+    Type: String
+    Default: arn:aws:codeconnections:us-east-2:476114134497:connection/064bbe91-e50e-44bb-ba06-d748fee571a6
+  
+  Repository:
+    Description: The repository path, including the GitHub account name in the format "account/repository".
+    Type: String
+    Default: lavigne/cloud-formation-samples
+  
+  BranchName:
+    Description: The branch name that the created CodePipeline will pull from.
+    Type: String
+    Default: main
+
+Resources:
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      ArtifactStore:
+        Location: !Ref CodePipelineArtifactsBucket
+        Type: S3
+      ExecutionMode: QUEUED
+      Name: !FindInMap [ Names, CreatedResources, CodePipeline ]
+      PipelineType: V2
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: CodeConnections
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: 1
+              Configuration:
+                ConnectionArn: !Ref ConnectionArn
+                FullRepositoryId: !Ref Repository
+                BranchName: !Ref BranchName
+              OutputArtifacts:
+                - Name: SourceOutput
+              RoleArn: !GetAtt CodePipelineSourceActionRole.Arn
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            - Name: DeployNetworkAccountPrimaryRegionResources
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND,CAPABILITY_NAMED_IAM
+                StackName: get-ssm-param-custom-resource-shared-services-account-all-regions
+                TemplatePath: !FindInMap [ Names, CloudFormationTemplates, SharedServicesAccountPrimaryRegion ]
+                RoleArn: !GetAtt CloudFormationRole.Arn
+                OutputFileName: output.json
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: DeployOutput
+              RoleArn: !GetAtt CodePipelineDeployActionRole.Arn
+              RunOrder: 1
+              # https://docs.aws.amazon.com/codepipeline/latest/userguide/action-reference-StackSets.html#action-reference-StackSet
+            - Name: DeployAllAccountsPrimaryRegionResources
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormationStackSet
+                Version: 1
+              Configuration:
+                PermissionModel: SELF_MANAGED
+                DeploymentTargets: !Ref WorkloadAccounts
+                Regions: !Ref PrimaryRegion
+                Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND,CAPABILITY_NAMED_IAM
+                StackSetName: get-ssm-param-custom-resource-shared-services-account-all-regions
+                TemplatePath: !FindInMap [ Names, CloudFormationTemplates, SharedServicesAccountAllRegions ]
+                Parameters:
+                  - !Sub 'ParameterKey=OrganizationId,ParameterValue=${OrganizationId}'
+              InputArtifacts:
+                - Name: SourceOutput
+              RoleArn: !GetAtt CodePipelineDeployActionRole.Arn
+              RunOrder: 2
+          OnFailure:
+            Result: ROLLBACK
+          BeforeEntry:
+            Conditions:
+              - Result: FAIL
+                Rules:
+                  - Name: MyDeploymentWindowRule
+                    RuleTypeId:
+                      Category: Rule
+                      Owner: AWS
+                      Provider: DeploymentWindow
+                      Version: '1'
+                    Configuration:
+                      Cron: '* * * * * ? *'
+                      TimeZone: 'PST'
+    DependsOn:
+      - CodePipelineRoleDefaultPolicy
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+        Version: '2012-10-17'
+  CodePipelineRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - s3:Abort*
+              - s3:DeleteObject*
+              - s3:GetBucket*
+              - s3:GetObject*
+              - s3:List*
+              - s3:PutObject
+              - s3:PutObjectLegalHold
+              - s3:PutObjectRetention
+              - s3:PutObjectTagging
+              - s3:PutObjectVersionTagging
+            Effect: Allow
+            Resource:
+              - !GetAtt CodePipelineArtifactsBucket.Arn
+              - !Join
+                - '/'
+                - - !GetAtt CodePipelineArtifactsBucket.Arn
+                  - '*'
+          - Action:
+              - s3:PutObjectAcl
+              - s3:PutObjectVersionAcl
+            Effect: Allow
+            Resource: !Join
+              - /
+              - - !GetAtt CodePipelineArtifactsBucket.Arn
+                - '*'
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Resource:
+              - !GetAtt CodePipelineSourceActionRole.Arn
+              - !GetAtt CodePipelineDeployActionRole.Arn
+        Version: '2012-10-17'
+      PolicyName: CodePipelineRoleDefaultPolicy
+      Roles:
+        - !Ref CodePipelineRole
+  CodePipelineSourceActionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+        Version: '2012-10-17'
+  CodePipelineSourceActionRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: codestar-connections:UseConnection
+            Effect: Allow
+            Resource: !Ref ConnectionArn
+          - Action:
+              - s3:Abort*
+              - s3:DeleteObject*
+              - s3:PutObject
+              - s3:PutObjectLegalHold
+              - s3:PutObjectRetention
+              - s3:PutObjectTagging
+              - s3:PutObjectVersionTagging
+            Effect: Allow
+            Resource:
+              - !GetAtt CodePipelineArtifactsBucket.Arn
+              - !Join
+                - '/'
+                - - !GetAtt CodePipelineArtifactsBucket.Arn
+                  - '*'
+          - Action:
+              - s3:PutObjectAcl
+              - s3:PutObjectVersionAcl
+            Effect: Allow
+            Resource: !Join
+              - /
+              - - !GetAtt CodePipelineArtifactsBucket.Arn
+                - '*'
+        Version: '2012-10-17'
+      PolicyName: CodePipelineSourceActionRoleDefaultPolicy
+      Roles:
+        - !Ref CodePipelineSourceActionRole
+  CodePipelineDeployActionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+        Version: '2012-10-17'
+  CodePipelineDeployActionRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - cloudformation:*
+            Effect: Allow
+            Resource: '*'
+          - Action: iam:PassRole
+            Condition:
+              StringEqualsIfExists:
+                iam:PassedToService:
+                  - cloudformation.amazonaws.com
+            Effect: Allow
+            Resource: '*'
+          - Action:
+              - s3:GetBucket*
+              - s3:GetObject*
+              - s3:List*
+              - s3:PutObject
+              - s3:PutObjectLegalHold
+              - s3:PutObjectRetention
+              - s3:PutObjectTagging
+              - s3:PutObjectVersionTagging
+            Effect: Allow
+            Resource:
+              - !GetAtt CodePipelineArtifactsBucket.Arn
+              - !Join
+                - '/'
+                - - !GetAtt CodePipelineArtifactsBucket.Arn
+                  - '*'
+          - Action:
+              - s3:PutObjectAcl
+              - s3:PutObjectVersionAcl
+            Effect: Allow
+            Resource: !Join
+              - /
+              - - !GetAtt CodePipelineArtifactsBucket.Arn
+                - '*'
+        Version: '2012-10-17'
+      PolicyName: CodePipelineDeployActionRoleDefaultPolicy
+      Roles:
+        - !Ref CodePipelineDeployActionRole
+  CloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - cloudformation.amazonaws.com
+                - codepipeline.amazonaws.com
+        Version: '2012-10-17'
+  CloudFormationRoleDefaultPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - cloudformation:*
+            Effect: Allow
+            Resource:
+              - !Sub 
+                - 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${pipelineName}'
+                - pipelineName: !FindInMap [ Names, CreatedResources, CodePipeline ]
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Resource:
+              - !GetAtt CodePipelineRole.Arn
+          - Action:
+              - s3:GetBucket*
+              - s3:GetObject*
+              - s3:List*
+              - s3:PutObject
+              - s3:PutObjectLegalHold
+              - s3:PutObjectRetention
+              - s3:PutObjectTagging
+              - s3:PutObjectVersionTagging
+            Effect: Allow
+            Resource:
+              - !GetAtt CodePipelineArtifactsBucket.Arn
+              - !Join
+                - '/'
+                - - !GetAtt CodePipelineArtifactsBucket.Arn
+                  - '*'
+          - Action:
+              - s3:PutObjectAcl
+              - s3:PutObjectVersionAcl
+            Effect: Allow
+            Resource: !Join
+              - /
+              - - !GetAtt CodePipelineArtifactsBucket.Arn
+                - '*'
+          - Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Effect: Allow
+            Resource:
+              - !Sub 
+                - 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codepipeline/${pipelineName}'
+                - pipelineName: !FindInMap [ Names, CreatedResources, CodePipeline ]
+              - !Sub 
+                - 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codepipeline/${pipelineName}:*'
+                - pipelineName: !FindInMap [ Names, CreatedResources, CodePipeline ]
+        Version: '2012-10-17'
+      PolicyName: CloudFormationDefaultPolicy
+      Roles:
+        - !Ref CloudFormationRole
+  CloudFormationRoleResourceCreationPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action: "*"
+            Resource: "*"
+      PolicyName: CloudFormationResourceCreationPolicy
+      Roles:
+        - !Ref CloudFormationRole
+  CodePipelineArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+  CodePipelineArtifactsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CodePipelineArtifactsBucket
+      PolicyDocument:
+        Statement:
+          - Action: s3:*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+            Effect: Deny
+            Principal:
+              AWS: '*'
+            Resource:
+              - !GetAtt CodePipelineArtifactsBucket.Arn
+              - !Join
+                - '/'
+                - - !GetAtt CodePipelineArtifactsBucket.Arn
+                  - '*'
+        Version: '2012-10-17'

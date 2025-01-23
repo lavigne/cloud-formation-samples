@@ -1,0 +1,18 @@
+
+Resources:
+  GetSsmParameterLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: GetSsmParameterLambdaExecutionRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess
+      AssumeRolePolicyDocument:
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - lambda.amazonaws.com
